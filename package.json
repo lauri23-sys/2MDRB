@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "dev": "node serve.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
+    "pdfjs-dist": "^6.1.200"
+  }
+}
