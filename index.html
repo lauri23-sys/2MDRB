@@ -323,7 +323,9 @@
   .evidence-expand{margin-top:11px; padding-top:10px; border-top:1px dashed var(--line); font-size:11.5px; color:var(--blue); font-weight:600;}
   .evidence-occ{margin-top:8px;}
   .occ-list{display:flex; flex-direction:column; gap:6px; max-height:230px; overflow:auto;}
-  .occ-line{display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--ink-soft); padding:6px 8px; background:var(--bg); border-radius:6px;}
+  .occ-line{display:flex; flex-direction:row; align-items:flex-start; gap:9px; font-size:11.5px; color:var(--ink-soft); padding:6px 8px; background:var(--bg); border-radius:6px;}
+  .occ-line-photo{width:40px; height:40px; border-radius:6px; object-fit:cover; flex-shrink:0; background:var(--bg-deep); cursor:pointer;}
+  .occ-line-text{display:flex; flex-direction:column; gap:3px; flex:1; min-width:0;}
   .occ-line-meta{display:flex; gap:8px; align-items:baseline;}
   .occ-line .mono{color:var(--ink); font-size:11px; flex-shrink:0;}
   .occ-line .occ-nb{font-weight:600; color:var(--ink);}
@@ -627,6 +629,7 @@
               </div>
               <select id="filter-neighborhood"><option value="all">All neighborhoods</option></select>
               <select id="filter-inspector"><option value="all">All inspectors</option></select>
+              <select id="filter-trade"><option value="all">All trades</option></select>
             </div>
           </div>
           <div class="panel-body">
@@ -1672,10 +1675,20 @@ function drawTrendChart(weeks){
   });
 }
 
-// Full occurrence table (for the ranking table's expand row).
+// Photo for a single occurrence: prefer its own real PDF/seed photo (each
+// occurrence carries the exact field photo behind that finding); fall back to the
+// code's representative photo (every occurrence of a code depicts the same
+// standard defect) and only then to the neutral placeholder. Never substitutes an
+// unrelated stock image, so a shown photo always belongs to this finding.
+function occPhoto(o, d){
+  return (o && o.photo) || (d && d.photo) || PHOTO_PLACEHOLDER;
+}
+// Full occurrence table (for the ranking table's expand row). Each row leads with
+// the field photo for that specific occurrence.
 function occTableHtml(d){
   const rows = (d.occurrences||[]).map(o=>`
     <tr>
+      <td><img class="thumb occ-thumb" src="${esc(occPhoto(o,d))}" alt="${esc(o.finding||deductionTitle(d))}"></td>
       <td class="mono">${fmtDate(o.date)}</td>
       <td>${esc(o.neighborhood)}</td>
       <td>${esc(o.inspector)}</td>
@@ -1683,15 +1696,19 @@ function occTableHtml(d){
       <td>${esc(o.finding||'')}</td>
     </tr>`).join('');
   return `<div class="occ-wrap"><table class="occ-table">
-    <thead><tr><th>Date</th><th>Neighborhood</th><th>Inspector</th><th>Room</th><th>Finding</th></tr></thead>
+    <thead><tr><th></th><th>Date</th><th>Neighborhood</th><th>Inspector</th><th>Room</th><th>Finding</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
-// Compact stacked occurrence list (for the narrow top-3 evidence cards).
+// Compact stacked occurrence list (for the narrow top-3 evidence cards). Each
+// line leads with its own occurrence photo.
 function occListHtml(d){
   return `<div class="occ-list">` + (d.occurrences||[]).map(o=>
     `<div class="occ-line">
-       <div class="occ-line-meta"><span class="mono">${fmtDate(o.date)}</span><span class="occ-nb">${esc(o.neighborhood)}</span><span class="occ-insp">${esc(o.inspector)}</span></div>
-       ${o.finding?`<div class="occ-finding">${esc(o.finding)}</div>`:''}
+       <img class="occ-line-photo occ-thumb" src="${esc(occPhoto(o,d))}" alt="${esc(o.finding||'')}">
+       <div class="occ-line-text">
+         <div class="occ-line-meta"><span class="mono">${fmtDate(o.date)}</span><span class="occ-nb">${esc(o.neighborhood)}</span><span class="occ-insp">${esc(o.inspector)}</span></div>
+         ${o.finding?`<div class="occ-finding">${esc(o.finding)}</div>`:''}
+       </div>
      </div>`
   ).join('') + `</div>`;
 }
@@ -1728,8 +1745,13 @@ function renderDeductionsView(){
   const tf = document.querySelector('#seg-timeframe .seg-btn.active').dataset.tf;
   const neighborhood = document.getElementById('filter-neighborhood').value;
   const inspector = document.getElementById('filter-inspector').value;
+  const trade = document.getElementById('filter-trade').value;
   const reports = filterReports({days:Number(tf), neighborhood, inspector});
-  const agg = aggregateDeductions(reports);
+  // Trade filtering is per-deduction (a report spans many trades), so it's
+  // applied to the aggregated lines, matching on the same canonical prettyTrade()
+  // label used to build the dropdown options.
+  const agg = aggregateDeductions(reports)
+    .filter(d=> trade==='all' || prettyTrade(d.trade)===trade);
 
   renderTrends('ded-trends','ded-trend-basis');
 
@@ -2757,22 +2779,34 @@ let filtersWired = false;
 function populateFilters(){
   const nSel = document.getElementById('filter-neighborhood');
   const iSel = document.getElementById('filter-inspector');
+  const tSel = document.getElementById('filter-trade');
   // Rebuild from scratch each call (uploads can add options). Keep the current
   // selection if it still exists, else fall back to "all".
-  const prevN = nSel.value, prevI = iSel.value;
+  const prevN = nSel.value, prevI = iSel.value, prevT = tSel.value;
   nSel.innerHTML = '<option value="all">All neighborhoods</option>';
   iSel.innerHTML = '<option value="all">All inspectors</option>';
+  tSel.innerHTML = '<option value="all">All trades</option>';
   // One option per base neighborhood — SF/TH (and 30s/40s) product-type variants
   // of the same community are combined into a single category, not listed separately.
   NEIGHBORHOODS_BASE.forEach(base=>{
     const o=document.createElement('option'); o.value=base; o.textContent=base; nSel.appendChild(o);
   });
   INSPECTORS_LIVE.forEach(i=>{ const o=document.createElement('option'); o.value=i; o.textContent=i; iSel.appendChild(o); });
+  // Every trade present in the (non-damage) data, canonicalized through
+  // prettyTrade() so underscore/space spellings collapse to one option. Values
+  // are the pretty labels, matched the same way in renderDeductionsView().
+  const trades = new Set();
+  REPORTS.forEach(r=> (r.items||[]).forEach(it=>{ if(!it.damage && it.trade) trades.add(prettyTrade(it.trade)); }));
+  [...trades].sort((a,b)=>a.localeCompare(b)).forEach(t=>{
+    const o=document.createElement('option'); o.value=t; o.textContent=t; tSel.appendChild(o);
+  });
   if([...nSel.options].some(o=>o.value===prevN)) nSel.value = prevN;
   if([...iSel.options].some(o=>o.value===prevI)) iSel.value = prevI;
+  if([...tSel.options].some(o=>o.value===prevT)) tSel.value = prevT;
   if(!filtersWired){
     nSel.addEventListener('change', renderDeductionsView);
     iSel.addEventListener('change', renderDeductionsView);
+    tSel.addEventListener('change', renderDeductionsView);
     filtersWired = true;
   }
 }
@@ -2862,6 +2896,11 @@ async function init(){
   // its photo enlarges it instead (without toggling the dropdown).
   document.getElementById('top3-list').addEventListener('click', e=>{
     const card = e.target.closest('.evidence-card'); if(!card) return;
+    // An occurrence thumbnail inside the expanded list enlarges that photo rather
+    // than toggling the card.
+    if(e.target.classList.contains('occ-thumb')){
+      openLightbox(e.target.src, e.target.alt); return;
+    }
     if(e.target.closest('.evidence-photo')){
       const img = card.querySelector('.evidence-photo img');
       const title = card.querySelector('.evidence-title');
